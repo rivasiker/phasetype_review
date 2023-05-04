@@ -1,0 +1,216 @@
+---
+title: "Figure 4"
+format: html
+editor: visual
+---
+
+```{r setup}
+
+# Load packages
+library(PhaseTypeR)
+library(tidyverse)
+library(ggthemes)
+
+```
+
+# Figure 4
+
+We can calculate the joint density for fixation and loss, and also the densities conditional on either fixation or loss. 
+
+```{r}
+
+# Theorem in section 3.2 of Gardner et at. 2021
+dDPH_conditioned_on_exit_2 <- function(subint_mat, init_probs, exit) {
+    I_mat <- diag(rep(1, ncol(subint_mat)))
+    
+    mu <- mean(DPH(subint_mat, init_probs))
+    pi_vec <- ((1/mu)*init_probs%*%solve(I_mat-subint_mat))[1,]
+    V_mat <- diag(ifelse(pi_vec == 0, 0, 1/pi_vec))%*%t(subint_mat)%*%diag(pi_vec)
+
+    beta_mat <- ((exit%*%diag(pi_vec))/sum(t(exit)%*%diag(pi_vec)))[1,]
+    v_vec <- sum(beta_mat%*%solve(I_mat-V_mat))
+    
+    phi_vec <- ((1/v_vec)%*%beta_mat%*%solve(I_mat-V_mat))[1,]
+    # h_mat <- diag(pi_vec)%*%diag(ifelse(phi_vec == 0, 0, 1/phi_vec))
+    h_vec <- (pi_vec%*%diag(ifelse(phi_vec == 0, 0, 1/phi_vec)))[1,]
+    alpha_vec <- ((init_probs)%*%diag(ifelse(h_vec == 0, 0, 1/h_vec)))[1,]/sum(init_probs%*%diag(ifelse(h_vec == 0, 0, 1/h_vec)))
+    T_mat <- diag(h_vec)%*%subint_mat%*%diag(ifelse(h_vec == 0, 0, 1/h_vec))
+    
+    DPH(T_mat, alpha_vec)
+}
+
+# Population size
+pop.sz <- 100
+# Initial frequency of mutation
+init_freq <- 0.05
+# Selection coefficients
+selec <- c(-0.1, 0, 0.05, 0.1, 0.2, 0.5)
+# Create empty table
+res <- tibble()
+# For each selection coefficient
+for (j in 1:length(selec)) {
+  # Save selection coefficient
+  s <- selec[j]
+  # Create empty sub-intensity matrix
+  subprb.matrix <- matrix( 0, nrow=(pop.sz-1), ncol=(pop.sz-1))
+  # Calculate vector of probabilities for success for the binomial sampling
+  prob_vec <- (1:(pop.sz-1))*(1+s)/((1:(pop.sz-1))*(1+s)+pop.sz-(1:(pop.sz-1)))
+  # For each frequency of the selected allele
+  for (i in 1:(pop.sz-1)){
+    # Save probability of success
+    prob <- prob_vec[i]
+    # Binomial sampling
+    subprb.matrix[i,] <- dbinom( x=(1:(pop.sz-1)), size=pop.sz, prob=prob)
+  }
+  # Compute exit rate vector for loss
+  t1 <-  dbinom(x=0,      size=pop.sz, prob=prob_vec)
+  # Compute exit rate vector for fixation
+  t2  <- dbinom(x=pop.sz, size=pop.sz, prob=prob_vec)
+  # Compute initial probability vector
+  initial.prb <- rep(0, (pop.sz-1))
+  initial.prb[round(pop.sz*init_freq)] <- 1
+  # Build discrete phase-type object for the number of generations
+  # until either fixation or loss
+  DPH_loss_fix <- DPH(subprb.matrix, initial.prb)
+  DPH_loss <- dDPH_conditioned_on_exit_2(subprb.matrix, initial.prb, t1)
+  DPH_fix <- dDPH_conditioned_on_exit_2(subprb.matrix, initial.prb, t2)
+  res <- bind_rows(
+    res,
+    tibble(
+      # Number of generations
+      x = seq(0:100),
+      # Density for the time until either loss or fixation
+      y = dDPH(x, DPH_loss_fix),
+      # Density for the time until loss
+      t_loss = dDPH(x, DPH_loss),
+      # Probability of loss
+      t_loss_norm = 
+        (initial.prb%*%
+        solve(diag(rep(1,length(initial.prb)))-subprb.matrix)%*%
+        t1)[,1],
+      # Density for the time until fixation
+      t_fix = dDPH(x, DPH_fix),
+      # Probability of fixation
+      t_fix_norm = 
+        (initial.prb%*%
+        solve(diag(rep(1,length(initial.prb)))-subprb.matrix)%*%
+        t2)[,1],
+      # Selection coefficient
+      s = s
+    )
+  )
+}
+
+```
+
+
+We can now simulate trajectories for the selected allele:
+
+```{r}
+
+simulate_trajectories <- function(DPH_loss_fix, i) {
+  # Simulate full path
+  tib <- DPH_loss_fix %>% 
+    rFullDPH() %>%
+    uncount(time) %>% 
+    mutate(time = 1:n(), i = i)
+  # Add last row (loss or fixation)
+  bind_rows(tib,
+            tibble(
+              state = ifelse(tib$state[nrow(tib)]>(pop.sz/2), pop.sz, 0),
+              time = nrow(tib)+1, 
+              i = i))
+}
+
+set.seed(0)
+
+nsim <- 50
+ressim <- tibble()
+# For each selection coefficient
+for (j in 1:length(selec)) {
+  # Create DPH object
+  subprb.matrix <- matrix( 0, nrow=(pop.sz-1), ncol=(pop.sz-1))
+  for (i in 1:(pop.sz-1)){
+    s <- selec[j]
+    prob <- i*(1+s)/(i*(1+s)+pop.sz-i)
+    subprb.matrix[i,] <- dbinom( x=(1:(pop.sz-1)), size=pop.sz, prob=prob)
+  }
+  initial.prb <- rep(0, (pop.sz-1))
+  initial.prb[round(pop.sz*init_freq)] <- 1
+  DPH_loss_fix <- DPH(subprb.matrix, initial.prb)
+  # Run each simulation
+  for (i in 1:nsim) {
+    ressim <- bind_rows(
+      ressim, 
+      mutate(
+        simulate_trajectories(DPH_loss_fix, i), 
+        s = s)
+      )
+  }
+}
+
+```
+
+Plotting the densities and simulations together:
+
+```{r warning=FALSE}
+
+res %>% 
+  # Normalize densities by probability of exiting
+  mutate(
+    t_loss = t_loss/max(y)*t_loss_norm,
+    t_fix = t_fix/max(y)*t_fix_norm,
+    y = y/max(y)
+    ) %>% 
+  ggplot() +
+  # Plot fixed simulation trajectories
+  geom_line(aes(time, state/pop.sz, 
+                group = i, color = 'Fixation'),
+            alpha = 0.3, 
+            data = ressim %>% 
+              group_by(s, i) %>% 
+              mutate(time_m = state[time == max(time)]) %>% 
+              ungroup() %>% 
+              filter(time_m == pop.sz)) +
+  geom_rug(aes(time, color = 'Fixation'), 
+           data = filter(ressim, state==pop.sz), sides="t",
+           alpha=0.3) + 
+  # Plot lost simulation trajectories
+  geom_line(aes(time, state/pop.sz, 
+                group = i, color = 'Loss'),
+            alpha = 0.3, 
+            data = ressim %>% 
+              group_by(s, i) %>% 
+              mutate(time_m = state[time == max(time)]) %>% 
+              ungroup() %>% 
+              filter(time_m == 0)) +
+  geom_rug(aes(time, color = 'Loss'), 
+           data = filter(ressim, state==0), sides="b",
+           alpha=0.3)+ 
+  # Plot density of fixation or loss
+  geom_line(aes(x, y), color = 'black') +
+  # Plot density conditional loss
+  geom_area(aes(x, t_loss, color = 'Loss', fill = 'Loss'), 
+            alpha = 0.2, linetype = 2) +
+  # Plot density conditional on fixation
+  geom_area(aes(x, t_fix, color = 'Fixation', fill = 'Fixation'), 
+            alpha = 0.2, linetype = 2) +
+  # Facet by selection coefficient
+  facet_wrap(~paste0('s = ', s)) +
+  theme_few() +
+  scale_x_continuous(limits = c(0, 100)) +
+  scale_color_manual(values = c('#FFC20A', '#0C7BDC')) +
+  scale_fill_manual(values = c('#FFC20A', '#0C7BDC')) +
+  ylab("Frequency") +
+  xlab('Time (number of generations)') +
+  guides(
+    fill = guide_legend(override.aes = list(alpha = 1)),
+    color = 'none'
+    ) +
+  theme(
+    legend.title = element_blank()
+  )
+
+ggsave('fix_loss.pdf', width = 216, height = 123, units = 'mm')
+
+```

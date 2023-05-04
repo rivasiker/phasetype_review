@@ -1,0 +1,86 @@
+---
+title: "Figure 6"
+format: html
+editor: visual
+---
+
+# Figure 6
+
+```{r setup}
+
+# Load packages
+library(PhaseTypeR)
+library(igraph)
+
+```
+
+```{r}
+
+# This function calculates the sub-intensity matrix
+# for the coalescent between three samples and two demes
+get_mat_migration <- function(mu) {
+  matrix(
+    c(
+      -1-3*mu, mu, mu, mu, 1, 0, 0, 0, 0, 0,
+      mu, -3-3*mu, mu, mu, 0, 1, 0, 0, 1, 1,
+      mu, mu, -1-3*mu, mu, 0, 0, 1, 0, 0, 0,
+      mu, mu, mu, -1-3*mu, 0, 0, 0, 1, 0, 0,
+      0, 0, 0, 0, -2*mu, 2*mu, 0, 0, 0, 0,
+      0, 0, 0, 0, 2*mu, -1-2*mu, 0, 0, 0, 0,
+      0, 0, 0, 0, 0, 0, -2*mu, 0, 0, 2*mu,
+      0, 0, 0, 0, 0, 0, 0, -2*mu, 2*mu, 0,
+      0, 0, 0, 0, 0, 0, 0, 2*mu, -1-2*mu, 0,
+      0, 0, 0, 0, 0, 0, 2*mu, 0, 0, -1-2*mu
+    ),
+    nrow = 10, byrow = T
+  )
+}
+
+# Create phase-type distribution
+mig_ph <- PH(get_mat_migration(2.5))
+summary(mig_ph)
+
+```
+
+```{r fig.height=6, fig.width=8}
+# Define plot margins
+par(mar=c(0,0,0,0)+.1)
+# Convert phase-type object to graph
+net <- phase_type_to_network(mig_ph) |> 
+  # Remove edges to self 
+  delete_edges(c(2, 7, 12, 17, 19, 23, 25, 28, 32, 35)) |> 
+  # Remove state 0
+  delete_vertices(1) 
+# Add node colors
+vertex_attr(net, 'color') <- c(
+  alpha('#A0FF9B', 0.5), 
+  rep(alpha('grey80', 0.5), gorder(net)-2), 
+  '#FF9B9D'
+  )
+# Change node names
+vertex_attr(net,'name') <- c(
+  "(a,b | c)","(a,b,c | )","(a | b,c)",
+  "(b | a,c)","(ab | c)","(ab, c | )",
+  "(a | bc)","(b | ac)","(ac,b | )",
+  "(a,bc | )","(abc | )"
+)
+# Plot graph
+set.seed(2)
+plot(net, edge.curved=.3, edge.color = 'blue', asp = 3/4,
+     vertex.label.color = 'black', vertex.frame.color = NA,
+     edge.arrow.size=0.5, vertex.size = 20,
+     vertex.label.family="Helvetica")
+
+```
+
+```{r}
+# Save plot
+pdf(file = "coalescent_with_migration.pdf", width = 8, height = 6)
+set.seed(2)
+par(mar=c(0,0,0,0)+.1)
+plot(net, edge.curved=.3, edge.color = 'blue', asp = 3/4,
+     vertex.label.color = 'black', vertex.frame.color = NA,
+     edge.arrow.size=0.5, vertex.size = 20,
+     vertex.label.family="Helvetica")
+dev.off()
+```
