@@ -17,7 +17,6 @@ library(ggh4x)
 
 ```
 
-
 # Figure 3
 
 First, we will define a function for computing the transition rate matrix of the coalescent (block counting process) given a certain sample size:
@@ -169,6 +168,8 @@ wrapper <- function(i) {
   mutate(get_cor(i), n = i)
 }
 
+start_time <- Sys.time()
+
 tab1 <- lapply(2:20, wrapper) %>%
   reduce(bind_rows) %>%
   as_tibble() %>% 
@@ -177,6 +178,9 @@ tab1 <- lapply(2:20, wrapper) %>%
     Var2 = factor(Var2, c('H', 'L', 'E', 'I')),
     type = 'Correlation'
   )
+
+end_time <- Sys.time()
+as.numeric(end_time - start_time)
 
 ```
 
@@ -236,3 +240,49 @@ totab %>%
 ggsave('cor_cov.pdf', width = 6, height = 5.5)
 
 ```
+
+```{r}
+
+tab1_bis <- tab1 |> 
+  mutate(
+    Var2_bis = Var2,
+    Var2 = Var1,
+    Var1 = Var2_bis
+  ) |> 
+  select(-Var2_bis)
+
+# Merge cor and cov matrices
+totab2 <- bind_rows(tab1_bis, tab2) %>% 
+  drop_na() %>% 
+  filter(n > 2) %>% 
+  pivot_wider(names_from = type, values_from = value)
+
+# Calculate secondary axis for ggplot
+sec <- help_secondary(totab, primary = Covariance, secondary = Correlation)
+
+totab2 %>% 
+  ggplot() +
+  geom_line(aes(n, Covariance), color = '#2c7bb6') +
+  geom_point(aes(n, Covariance), color = '#2c7bb6', size = 1) +
+  geom_line(aes(n, sec$proj(Correlation)), color = '#d7191c') +
+  geom_point(aes(n, sec$proj(Correlation)), color = '#d7191c', size = 1) +
+  facet_grid(Var2~Var1, switch="y") +
+  theme_few() +
+  scale_y_continuous(breaks = 0:5, sec.axis = sec) +
+  theme(
+    strip.text.y.left = element_text(angle = 0), 
+    strip.placement = "outside",
+    axis.text.y.right = element_text(color = "#d7191c"),
+    axis.text.y.left = element_text(color = "#2c7bb6"),
+    axis.ticks.y.left = element_line(color = "#2c7bb6"),
+    axis.ticks.y.right = element_line(color = "#d7191c"),
+    axis.title.y.right = element_text(color = "#d7191c", margin = margin(l=13)),
+    axis.title.y.left = element_text(color = "#2c7bb6"),
+    aspect.ratio = 1) +
+  ylab('Covariance') +
+  xlab('n') 
+
+ggsave('cor_cov_2.pdf', width = 6, height = 5.5)
+
+```
+
