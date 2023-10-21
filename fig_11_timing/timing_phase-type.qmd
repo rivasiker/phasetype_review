@@ -1,0 +1,187 @@
+---
+title: "Timing"
+format: html
+editor: visual
+---
+
+```{r setup}
+
+library(tidyverse)
+library(partitions)
+
+```
+
+```{r}
+
+## Purpose:
+## This function finds the state space and corresponding rate matrix
+## for the block counting process for a number of samples n in the 
+## standard coalescent.
+##
+## Input:
+## n: Number of samples
+##
+## Output:
+## List consisting of
+## RateM: Rate matrix
+## StSpM: Matrix with rows corresponding to the states
+##        A state is a n-dimensional row vector (a1,...,an).
+##        For example the beginning state is (n,0,...,0),
+##        the next state is (n-2,1,0,...,0), 
+##        and the ending state (MRCA) is (0,...,0,1).
+##
+##----------------------------------------------------------------
+BlockCountingRateMAndStateSpace <- function(n){
+  ##----------------------------------------------------
+  ## Possible states
+  ##----------------------------------------------------
+  ## Size of the state space (number of states)
+  nSt <- P(n)
+  ## Definition of the state space
+  StSpM <- matrix(ncol=n,nrow=nSt)
+  ## Set of partitions of [n]
+  x <- parts(n)
+  ## Rewriting the partitions as (a1,...,an)
+  for (i in 1:nSt) {
+    st <- x[,i]
+    StSpM[i,] <- tabulate(x[,i],nbins=n)
+  }
+  ## Reordering
+  StSpM <- StSpM[order(rowSums(StSpM),decreasing=TRUE),]
+  ## Because of this ordering we can't 'go back', i.e.
+  ## below the diagonal the entries are always zero
+  ##----------------------------------------------------
+  ## Intensity matrix
+  ##----------------------------------------------------
+  RateM <- matrix(0,ncol=nSt,nrow=nSt)
+  ## Algorithm for finding rates between states
+  for (i in 1:(nSt-1)){
+    for (j in (i+1):nSt){
+      # cat(i," state i",StSpM[i,])
+      # cat(" ",j," state j",StSpM[j,])
+      cvec <- StSpM[i,]-StSpM[j,]
+      # cat(" cvec",cvec)
+      ## Two branches are merged, i.e. removed from state i 
+      check1 <- sum(cvec[cvec>0])==2
+      # cat(" check1",check1)
+      ## One new branch is created, i.e. added in state from j
+      check2 <- sum(cvec[cvec<0])==-1
+      # cat(" check2",check2)
+      if (check1 & check2){
+        ## Size(s) of the block(s) and the corresponding rates
+        tmp <- StSpM[i,which(cvec>0)]
+        RateM[i,j] <- ifelse(length(tmp)==1,tmp*(tmp-1)/2,prod(tmp))
+      }
+    }
+  }
+  ## Diagonal part of the rate matrix
+  for (i in 1:nSt){
+    RateM[i,i] <- -sum(RateM[i,])
+  }
+  return(list(RateM=RateM,StSpM=StSpM))
+}
+
+```
+
+```{r}
+
+##---------------------------------------------
+## Timing of summary statistics for PhaseTypeR
+##---------------------------------------------
+## MEAN
+##---------------------------------------------
+n.vec <- 3:25
+res.vec <- rep(0,length(n.vec))
+nSt.vec <- rep(0,length(n.vec))
+for (i in 1:length(n.vec)){
+  n <- n.vec[i]
+  BlockModel <- BlockCountingRateMAndStateSpace(n)
+  nSt <- P(n)
+  submat <- BlockModel$RateM[-P(n),-P(n)]
+  e1 <- c(1,rep(0,P(n)-2))
+  ph_obj <- PH(subint_mat=submat,init_probs=e1)
+  start.time <- Sys.time()
+  mean(ph_obj)
+  end.time <- Sys.time()
+  time.taken <- end.time-start.time
+  res.vec[i] <- time.taken
+  nSt.vec[i] <- nSt-1
+  cat("n:",n,"\n")
+}
+#pdf(file="TimeForMean.pdf",height=6,width=8)
+plot(nSt.vec,res.vec,#log="x",
+     xlab="Size of state space",
+     ylab="Time for calculating the mean (secs)",
+     pch=19,cex=1,
+     main="Time for calculating the mean of the block counting process")
+x <- seq(0,max(nSt.vec),by=5)
+#lm.sqr.fit <- lm(res.vec~0+I(nSt.vec^2))
+#points(x,lm.sqr.fit$coefficients[1]*x^2,type="l",col="blue",lwd=2)
+lm.cub.fit <- lm(res.vec~0+I(nSt.vec^3))
+points(x,lm.cub.fit$coefficients[1]*x^3,type="l",col="darkblue",lwd=2)
+ix <- c(13,15,17:23)
+ps <- c(rep(0.1,8),-0.15)
+text(nSt.vec[ix],res.vec[ix]+ps,n.vec[ix],cex=1.1)
+arrows(850,0.8,1000,0.45,lwd=2)
+text(850,0.8,"Sample size",pos=3)
+arrows(1500,0.3,1400,0.6,lwd=2,col="darkblue")
+text(1500,0.3,"Cubic fit",pos=1,col="darkblue")
+#dev.off()
+
+
+```
+
+```{r}
+
+##------------
+## COVARIANCE
+##------------
+n.vec <- 3:16
+res.vec <- rep(0,length(n.vec))
+nSt.vec <- rep(0,length(n.vec))
+for (i in 1:length(n.vec)){
+  n <- n.vec[i]
+  BlockModel <- BlockCountingRateMAndStateSpace(n)
+  nSt <- P(n)
+  submat <- BlockModel$RateM[-P(n),-P(n)]
+  # Initial probability vector
+  e1 <- c(1,rep(0,P(n)-2))
+  # The reward matrix is the state space matrix of the block counting process
+  RewMat <- BlockModel$StSpM[-P(n),-n]
+  # Define MPH object
+  PHRewObj <- MPH(submat, e1, RewMat)
+  # Calculation of variance-covariance matrix
+  start.time <- Sys.time()
+  VarCovMat <- var(PHRewObj)
+  end.time <- Sys.time()
+  time.taken <- as.numeric(end.time-start.time,unit="secs")
+  res.vec[i] <- time.taken
+  nSt.vec[i] <- nSt-1
+  cat("n:",n,"\n")
+}
+#pdf(file="TimeForCov.pdf",height=6,width=8)
+plot(nSt.vec,res.vec,#log="x",
+     xlab="Size of state space",
+     ylab="Time for calculating the covariance (secs)",
+     pch=19,cex=1,
+     main="Time for calculating the covariance matrix 
+     of the site frequency spectrum")
+x <- seq(0,max(nSt.vec),by=5)
+#lm.sqr.fit <- lm(res.vec~0+I(nSt.vec^2))
+#points(x,lm.sqr.fit$coefficients[1]*x^2,type="l",col="blue",lwd=2)
+lm.cub.fit <- lm(res.vec~0+I(nSt.vec^3))
+points(x,lm.cub.fit$coefficients[1]*x^3,type="l",col="darkblue",lwd=2)
+ix <- c(6:14)
+ps <- c(rep(1,6),rep(2,2),-3)
+text(nSt.vec[ix],res.vec[ix]+ps,n.vec[ix],cex=1.1)
+arrows(90,10,100,5,lwd=2)
+text(90,10,"Sample size",pos=3)
+arrows(160,3,150,6.5,lwd=2,col="darkblue")
+text(160,3,"Cubic fit",pos=1,col="darkblue")
+#dev.off()
+
+
+```
+
+
+
